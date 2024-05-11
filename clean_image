@@ -1,0 +1,20 @@
+#!/bin/bash
+
+source lib/tools.sh
+
+is_run_as_root
+
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <Image to clean>"
+    echo
+    echo "Examples:"
+    echo " - $0 ubuntu"
+    echo " - $0 alpine"
+    exit 1
+fi
+DISTRO=$1
+MOUNT_DIR="distro_chroot/${DISTRO}"
+
+container_name_from_image
+
+unmount_and_clean

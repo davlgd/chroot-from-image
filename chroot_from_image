@@ -1,0 +1,71 @@
+#!/bin/bash
+
+source lib/tools.sh
+
+is_run_as_root
+
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <Linux distribution> [Command]"
+    echo
+    echo "Examples:"
+    echo " - $0 ubuntu"
+    echo " - $0 alpine /bin/sh"
+    exit 1
+fi
+
+DISTRO=$1
+MOUNT_DIR="distro_chroot/${DISTRO}"
+COMMAND=${2:-"/bin/bash"}
+DNS_RESOLVER="1.1.1.1"
+
+# Check if docker is installed
+if ! command -v docker &> /dev/null; then
+    echo "Docker is not installed. Please install Docker first."
+    exit 1
+fi
+
+container_name_from_image
+
+# Check that the asked image does not already exist as a container
+if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "A container named ${CONTAINER_NAME} already exists. Please remove it first."
+    exit 1
+else
+    # Create a docker container from the asked image
+    docker create --name "${CONTAINER_NAME}" "${DISTRO}" "${COMMAND}" > /dev/null
+    if [ $? -ne 0 ]; then
+        echo "Error during the creation of the container from ${DISTRO} image."
+        exit 1
+    fi
+fi
+
+# Create a directory to store the image filesystem
+mkdir -p "${MOUNT_DIR}"
+if [ $? -ne 0 ]; then
+    echo "Error during the creation of the mount directory."
+    exit 1
+fi
+
+# Extract the docker image content, mount directories
+docker export "${CONTAINER_NAME}" | tar x -C "${MOUNT_DIR}"
+if [ $? -ne 0 ]; then
+    echo "Error during the extraction of the image content."
+    exit 1
+fi
+
+# Check the asked command exists in the extracted image
+if ! { [ -x "${MOUNT_DIR}/${COMMAND}" ] || [ -x "${MOUNT_DIR}/usr/bin/${COMMAND}" ] || [ -x "${MOUNT_DIR}/usr/sbin/${COMMAND}" ]; }; then
+    echo "The command ${COMMAND} does not exist in the extracted image."
+    exit 1
+fi
+
+# Mount the necessary directories
+mount --bind /dev "${MOUNT_DIR}/dev"
+mount -t devpts /dev/pts "${MOUNT_DIR}/dev/pts"
+mount -t proc /proc "${MOUNT_DIR}/proc"
+mount -t sysfs /sys "${MOUNT_DIR}/sys"
+echo "nameserver ${DNS_RESOLVER}" > "${MOUNT_DIR}/etc/resolv.conf"
+
+# Chroot into the container, clean after exit
+chroot "${MOUNT_DIR}" "${COMMAND}"
+trap unmount_and_clean EXIT
